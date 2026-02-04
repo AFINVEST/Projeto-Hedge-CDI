@@ -24,21 +24,70 @@ import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
 from unidecode import unidecode
+from openpyxl import load_workbook
+
 
 # ========================= Paths / Config =========================
 CONTROLE_XLSX = Path("Dados/ativos_mapeados_para_controle.xlsx")   # entrada
-MATRIZ_XLSX   = Path("Dados/Matriz de Curvas 31102025.xlsx")             # matriz de curvas
+MATRIZ_ORIG_XLSX = Path("Dados/Matriz de Curvas 30012026.xlsx")
 OUT_FINAL_XLSX = Path("Dados/ativos_mapeados_com_taxa_efetiva.xlsx")
 OUT_SEM_TAXA_XLSX = Path("Dados/ativos_sem_taxa.xlsx")
 
 # Diretório da árvore de carteiras diárias (BTG)
 BASE_DIR = Path(r"Z:\Asset Management")  # ajuste se necessário
-SPECIFIC_DATE = pd.Timestamp("2025-10-31")            # <- Data que será inserida no campo #Data quando o toggle estiver ligado
+SPECIFIC_DATE = pd.Timestamp("2026-01-09")            # <- Data que será inserida no campo #Data quando o toggle estiver ligado
 
 # DEBUG
 DEBUG = True
 def dbg(*a, **k):
     if DEBUG: print(*a, **k)
+
+def preparar_matriz_sem_4a_coluna(matriz_path: Path) -> Path:
+    """
+    Cria uma cópia da MATRIZ removendo a 4ª coluna (coluna D) das:
+      - Sheet 0 (CURVA PERCENTUAL)
+      - Sheet 1 (CURVA SPREAD)
+    Usa nomes se existirem; senão, cai no fallback por índice (0 e 1).
+    Não sobrescreve o arquivo original.
+    """
+    out = matriz_path.with_name(matriz_path.stem + "_SEM_COL4.xlsx")
+
+    # cache simples: se já existe e é mais novo que o original, reaproveita
+    try:
+        if out.exists() and out.stat().st_mtime >= matriz_path.stat().st_mtime:
+            return out
+    except Exception:
+        pass
+
+    wb = load_workbook(matriz_path)
+
+    def _delete_col4(ws):
+        if ws is None:
+            return
+        # só deleta se existir pelo menos 4 colunas
+        if getattr(ws, "max_column", 0) >= 4:
+            ws.delete_cols(4)
+
+    # tenta por nome
+    alvo_nomes = ["CURVA PERCENTUAL", "CURVA SPREAD"]
+    achou_por_nome = False
+    for nm in alvo_nomes:
+        if nm in wb.sheetnames:
+            _delete_col4(wb[nm])
+            achou_por_nome = True
+
+    # fallback por índice (sheet 0 e 1)
+    if not achou_por_nome:
+        wss = wb.worksheets
+        if len(wss) >= 1:
+            _delete_col4(wss[0])
+        if len(wss) >= 2:
+            _delete_col4(wss[1])
+
+    wb.save(out)
+    return out
+
+MATRIZ_XLSX = preparar_matriz_sem_4a_coluna(MATRIZ_ORIG_XLSX)
 
 # ========================= Helpers texto/num =========================
 def _norm(s):
@@ -101,15 +150,15 @@ def _infer_subclasse(row: pd.Series) -> str:
 # ========================= Mapeamento de Fundos (nomes de pasta/arquivo) =========================
 # Mapa fornecido: chaves = como vem no CONTROLE, valores = nome usado no arquivo/pasta
 FUND_NAME_MAP_RAW = {
-    "BBRASIL FIM CP RESP": "BBRASIL FIM CP RESP",
-    "BH FIRF INFRA":       "BH INFRA",
+    "BBRASIL FIM CP RESP": "BBRASIL FIM",
+    "BH INFRA":       "BH INFRA",
     "BMG SEG":             "BMG SEG",
     "BORDEAUX INFRA":      "BORDEAUX INFRA",
     "FIRF GERAES":         "GERAES",
     "FIRF GERAES 30":      "GERAES 30",
-    "HORIZONTE":           "AF HORIZONTE",
+    "HORIZONTE FIM":           "AF HORIZONTE",
     "JERA2026":            "JERA2026",
-    "MANACA INFRA FIRF":   "MANACA INFRA",
+    "MANACA INFRA":   "MANACA INFRA",
     "REAL FIM":            "REAL FIM",
     "TOPAZIO INFRA":       "TOPAZIO INFRA",
 }
@@ -287,22 +336,66 @@ def taxas_isin_no_ultimo_dia(fundo: str,
 
 # ========================= Parte B — Matriz (rating / YMF) =========================
 def carrega_mapa_bancos(arquivo: Path) -> pd.DataFrame:
-    base = pd.read_excel(arquivo, sheet_name=0)
-    ren = {}
-    for c in base.columns:
-        cn = _norm(c)
-        if "BANC" in cn:   ren[c] = "Banco"
-        elif "YMF" in cn:  ren[c] = "YMF"
-        elif "RATING" in cn: ren[c] = "Rating"
-    base = base.rename(columns=ren)
-    if "Banco" not in base.columns:
-        raise ValueError("Sheet 0 precisa ter coluna de Banco.")
-    base["Banco"] = base["Banco"].astype(str).str.strip()
-    base["Banco_norm"] = base["Banco"].map(_norm)
-    base["Rating"] = pd.to_numeric(base.get("Rating"), errors="coerce")
-    base["YMF"] = base.get("YMF", np.nan).astype(str).str.strip()
-    base["YMF_norm"] = base["YMF"].map(_norm)
-    return base[["Banco","Banco_norm","Rating","YMF","YMF_norm"]].dropna(subset=["Banco"])
+    xls = pd.ExcelFile(arquivo)
+
+    # procura automaticamente uma sheet que tenha "Banco" (ou variações)
+    def _try_sheet(sh):
+        tmp = pd.read_excel(xls, sheet_name=sh, nrows=50)
+        ren = {}
+        for c in tmp.columns:
+            cn = _norm(c)
+            if ("BANC" in cn) or ("INSTIT" in cn) or ("EMISS" in cn):
+                ren[c] = "Banco"
+            elif "YMF" in cn:
+                ren[c] = "YMF"
+            elif "RATING" in cn:
+                ren[c] = "Rating"
+
+        tmp2 = tmp.rename(columns=ren)
+        if "Banco" not in tmp2.columns:
+            return None  # não é sheet de mapa de bancos
+
+        base = pd.read_excel(xls, sheet_name=sh).rename(columns=ren)
+
+        base["Banco"] = base["Banco"].astype(str).str.strip()
+        base["Banco_norm"] = base["Banco"].map(_norm)
+
+        # Rating pode não existir (ou não ser reconhecido): não quebra
+        if "Rating" in base.columns:
+            base["Rating"] = pd.to_numeric(base["Rating"], errors="coerce")
+        else:
+            base["Rating"] = np.nan
+
+        # YMF pode não existir: não quebra
+        if "YMF" in base.columns:
+            s = base["YMF"]
+            base["YMF"] = s.where(pd.notna(s), "").astype(str).str.strip()
+        else:
+            base["YMF"] = ""
+
+        base["YMF_norm"] = base["YMF"].map(_norm)
+
+        return (
+            base[["Banco", "Banco_norm", "Rating", "YMF", "YMF_norm"]]
+            .dropna(subset=["Banco"])
+            .drop_duplicates(subset=["Banco_norm"], keep="first")
+            .reset_index(drop=True)
+        )
+
+    # tenta primeiro sheets comuns de “mapa”
+    prefer = ["MAPA", "BANCOS", "BANCO", "EMISSORES", "RATING"]
+    sheet_order = sorted(xls.sheet_names, key=lambda n: (0 if any(p in _norm(n) for p in prefer) else 1, n))
+
+    last_err = None
+    for sh in sheet_order:
+        try:
+            out = _try_sheet(sh)
+            if out is not None:
+                return out
+        except Exception as e:
+            last_err = e
+
+    raise ValueError(f"Não encontrei uma sheet com mapa de bancos (Banco/Rating/YMF). Último erro: {last_err}")
 
 KNOWN_MAP = {
     "BANCO ABC BRASIL S.A.": "Banco ABC",
@@ -487,7 +580,17 @@ def main():
 
     taxa_isin_rows = []
     if not pares_btg.empty:
-        ano = date.today().year; d_ini = f"{ano}-01-01"; d_fim = SPECIFIC_DATE.isoformat()
+        hoje = pd.Timestamp(date.today()).normalize()
+
+        d_fim_ts = pd.Timestamp(SPECIFIC_DATE).normalize()
+        # se SPECIFIC_DATE estiver no futuro, limita em "hoje"
+        d_fim_ts = min(d_fim_ts, hoje)
+
+        # usa o ano do d_fim (e não o ano de hoje), senão dá start > end quando SPECIFIC_DATE está no passado
+        d_ini_ts = pd.Timestamp(year=d_fim_ts.year, month=1, day=1)
+
+        d_ini = d_ini_ts.date().isoformat()
+        d_fim = d_fim_ts.date().isoformat()
         for fundo in sorted(pares_btg["Fundo_can"].unique()):
             dbg(f"\n[BTG] Procurando último dia de '{fundo}'...")
             try:

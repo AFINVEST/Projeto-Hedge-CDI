@@ -1,0 +1,36 @@
+Após parse, OUT ficou vazio.
+Columns: ['Descrição da Taxa', 'Dias Úteis', 'Dias Corridos', 'Preço/Taxa']
+col_du=Dias Úteis | col_tax=Descrição da Taxa | col_dc=Dias Corridos
+
+Head original:
+Descrição da Taxa  Dias Úteis  Dias Corridos Preço/Taxa
+         DI x pré           1              3      14,90
+         DI x pré           2              4      14,90
+         DI x pré           3              5      14,90
+         DI x pré           4              6      14,90
+         DI x pré           5              7      14,90
+         DI x pré           7             11      14,90
+         DI x pré           9             14      14,90
+         DI x pré          10             17      14,90
+         DI x pré          11             18      14,90
+         DI x pré          13             21      14,90
+         DI x pré          19             31      14,90
+         DI x pré          21             33      14,90
+         DI x pré          22             34      14,90
+         DI x pré          23             35      14,90
+         DI x pré          24             38      14,90
+         DI x pré          25             39      14,90
+         DI x pré          26             40      14,90
+         DI x pré          27             41      14,90
+         DI x pré          31             47      14,90
+         DI x pré          32             48      14,90
+         DI x pré          33             49      14,90
+         DI x pré          34             52      14,90
+         DI x pré          40             60      14,88
+         DI x pré          43             63      14,87
+         DI x pré          44             68      14,87
+         DI x pré          45             69      14,86
+         DI x pré          46             70      14,86
+         DI x pré          49             75      14,86
+         DI x pré          50             76      14,85
+         DI x pré          51             77      14,85

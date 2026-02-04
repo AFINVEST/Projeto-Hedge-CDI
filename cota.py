@@ -31,7 +31,6 @@ CURVA_DU_PARQUET = (Path("/mnt/data/curva_di_interpolada_por_DU.parquet")
                     if Path("/mnt/data/curva_di_interpolada_por_DU.parquet").exists()
                     else CURVA_DU_PARQUET_DEFAULT)
 
-
 CDI_AA_DEFAULT = 0.12  # fallback 12% a.a.
 MOTOR_PCT_CDI      = "PCT_CDI"        # usa CDI como indexador; pode ser bullet (incorpora) ou cupom
 MOTOR_YTC_CHAMADAS = "YTC_CHAMADAS"   # fluxo até próxima CALL (YTC), com % do indexador no desconto
@@ -782,7 +781,7 @@ def _bday_count(d0: pd.Timestamp, d1: pd.Timestamp) -> int:
 
 # --------------------------- Leitura bases ---------------------------
 def find_relatorio_path() -> Optional[Path]:
-    files = sorted(Path(".").glob("Dados/Relatório de Posição 2025-10-31.xlsx"))
+    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-01-30.xlsx"))
     return files[0] if files else None
 
 @st.cache_data
@@ -1469,7 +1468,7 @@ if calendario == True:
 st.sidebar.write('---')
 visao = st.sidebar.radio(
     "Visão",
-    options=["Match de Ativos e DI", "Calculadora de Ativos", "Calculadora de Fundos"],
+    options=["Match de Ativos e DI", "Calculadora de Bancarios", "Calculadora de Debentures","Calculadora de Fundos"],
     index=0,
     key="visao_mode"
 )
@@ -3053,8 +3052,8 @@ def _df_desconto_desde_base_por_DU(base_dt, fim, beta, s_R):
     return float(DF)
 
 # ===================== VISÃO 2 — Calculadora de Ativos (CORRIGIDA: metodologia por DU) =====================
-if visao == "Calculadora de Ativos":
-    st.title("HEDGE DI — Calculadora de Ativos")
+if visao == "Calculadora de Bancarios":
+    st.title("HEDGE DI — Calculadora de Ativos Bancarios")
 
     # Escolha do ativo
     if ("Codigo" not in out.columns) or out.empty:
@@ -4448,15 +4447,19 @@ if visao == "Calculadora de Fundos":
                     return f'DIN{yy}'
                 return None  # outros meses ignorados
             # DI1JAN27 / DI1JAN27INDEX ...
-            m2 = _re.search(r'^DI1(JAN|JUN)(\d{2})', s)
+            m2 = _re.search(r'^DI1(JAN|JUN|JUL)(\d{2})', s)
             if m2:
                 mon, yy = m2.group(1), m2.group(2)
-                return f'DI{"F" if mon=="JAN" else "N"}{yy}'
+                if mon == "JAN":
+                    return f"DIF{yy}"
+                if mon in {"JUN","JUL"}:
+                    return f"DIN{yy}"
+                return None
             # Tenta achar "JAN/JUN" + yy solto
-            m3 = _re.search(r'(JAN|JUN).*(\d{2})', s)
+            m3 = _re.search(r'(JAN|JUN|JUL).*(\d{2})', s)
             if m3:
                 mon, yy = m3.group(1), m3.group(2)
-                return f'DI{"F" if mon=="JAN" else "N"}{yy}'
+                return f"DIF{yy}" if mon=="JAN" else f"DIN{yy}"
             return None
 
         if col_ticker:
@@ -5494,23 +5497,37 @@ if visao == "Calculadora de Fundos":
         """
         'DI1JAN27' -> 'DIF27'
         'DI1JUN27' -> 'DIN27'
-        'ODF26'/'ODN26' idem
+        'DI1JUL26' -> 'DIN26'   # (seu caso)
+        'ODF26'/'ODN26' -> 'DIF26'/'DIN26'
+        Aceita sufixos tipo ' Index', ' Comdty', etc.
         """
         if not isinstance(ativo, str):
             return None
-        s = ativo.strip().upper().replace(" ", "")
 
-        m = _re.search(r"^DI1(JAN|JUN)(\d{2})$", s)
+        s = ativo.strip().upper()
+
+        # pega só o "ticker" do começo (antes de espaço / sufixo)
+        s = s.split()[0]  # ex: "DI1JAN27 INDEX" -> "DI1JAN27"
+        s = s.replace(" ", "")
+
+        m = _re.match(r"^DI1([A-Z]{3})(\d{2})$", s)
         if m:
             mon, yy = m.group(1), int(m.group(2))
-            return f"DI{'F' if mon=='JAN' else 'N'}{yy:02d}"
+            # regra que você pediu:
+            # JAN -> F ; JUL -> N ; JUN -> N
+            if mon == "JAN":
+                return f"DIF{yy:02d}"
+            if mon in {"JUN", "JUL"}:
+                return f"DIN{yy:02d}"
+            return None  # outros meses: defina regra se quiser
 
-        m2 = _re.search(r"^OD([FN])(\d{2})$", s)
+        m2 = _re.match(r"^OD([FN])(\d{2})$", s)
         if m2:
             fn, yy = m2.group(1), int(m2.group(2))
             return f"DI{'F' if fn=='F' else 'N'}{yy:02d}"
 
         return None
+
 
     try:
         filtro_estrategia = rel_df['Estratégia'].str.contains("Hedge DI", na=False)
@@ -5882,3 +5899,544 @@ if visao == "Calculadora de Fundos":
             #st.write("Buckets em df_di_use:", sorted(df_di_use['DI_bucket'].astype(str).unique()))
             #_bucks_needed = sorted(pd.unique(pd.concat([agg_consec['DI_bucket'], agg_dur['DI_bucket']], ignore_index=True)))
             #st.write("Buckets necessários (resultado atual):", _bucks_needed)
+
+if visao == "Calculadora de Debentures":
+    import re
+    from pathlib import Path
+
+    import numpy as np
+    import pandas as pd
+    import streamlit as st
+    import plotly.express as px
+
+    # =========================================================
+    # CONFIG
+    # =========================================================
+    BASE_XLSX = r"Dados/Base de Deb e Prêmios.xlsx"
+    FLUX_CSV  = r"Dados/flux_deb2.csv"
+    DIAS_UTEIS_ANO = 252.0
+
+    st.subheader("Calculadora BE — Debêntures (ANBIMA)")
+
+    # =========================================================
+    # HELPERS
+    # =========================================================
+    def ptbr_to_float(x):
+        """Converte '1.234,56' -> 1234.56; vazio -> NaN; aceita percentuais."""
+        if pd.isna(x):
+            return np.nan
+        if isinstance(x, (int, float, np.number)):
+            return float(x)
+
+        s = str(x).strip()
+        if s == "":
+            return np.nan
+
+        if s.endswith("%"):
+            s2 = s[:-1].strip().replace(".", "").replace(",", ".")
+            try:
+                return float(s2) / 100.0
+            except Exception:
+                return np.nan
+
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return np.nan
+
+
+    def parse_taxa_indicativa(tipo: str, taxa: str) -> float:
+        """Retorna taxa indicativa (decimal) a partir de 'Taxa' (string do CSV)."""
+        v = ptbr_to_float(taxa)
+        if pd.notna(v):
+            return v
+
+        combo = f"{tipo} {taxa}".strip().upper()
+        if combo == "":
+            return np.nan
+
+        m = re.search(r"([-+]?\d+(?:[.,]\d+)?)\s*%?", combo)
+        if not m:
+            return np.nan
+
+        num = m.group(1).replace(".", "").replace(",", ".")
+        try:
+            return float(num) / 100.0
+        except Exception:
+            return np.nan
+
+
+    def fmt_pct(x: float, nd=4):
+        if pd.isna(x):
+            return ""
+        return f"{x*100:.{nd}f}%"
+
+
+    def fmt_num(x: float, nd=2):
+        if pd.isna(x):
+            return ""
+        return f"{x:,.{nd}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+    # =========================================================
+    # LOADERS
+    # =========================================================
+    @st.cache_data(show_spinner=False)
+    def load_base_premios(path_xlsx: str) -> pd.DataFrame:
+        df = pd.read_excel(path_xlsx, sheet_name="BaseAtivos&Premios")
+
+        df["Data_Inicio"] = pd.to_datetime(df["Data_Inicio"], errors="coerce")
+        df["Data_Fim"]    = pd.to_datetime(df["Data_Fim"], errors="coerce")
+        df["Premio_aa"]   = pd.to_numeric(df["Premio_aa"], errors="coerce")
+
+        df["ID"] = df["ID"].astype(str).str.strip().str.upper()
+        for c in ["MetodoPremio", "BasePremio", "Formula"]:
+            if c in df.columns:
+                df[c] = df[c].astype(str).str.strip().str.upper()
+            else:
+                df[c] = np.nan
+        return df
+
+
+    @st.cache_data(show_spinner=False)
+    def load_fluxos(path_csv: str) -> pd.DataFrame:
+        df = pd.read_csv(path_csv)
+
+        colmap = {
+            "Dados do evento": "Evento",
+            "Data de pagamento": "DataPag",
+            "Prazos (dias úteis)": "PrazoDU",
+            "Dias entre pagamentos": "DiasEntre",
+            "Expectativa de juros (%)": "ExpJurosPct",
+            "Juros projetados": "JurosProj",
+            "Amortizações": "Amort",
+            "Fluxo descontado (R$)": "FluxoDesc",
+            "Ativo": "Ativo",
+            "VNE": "VNE",
+            "TaxaEmissao": "TaxaEmissao",
+            "VNA": "VNA_ref",
+            "Tipo": "Tipo",
+            "Taxa": "TaxaRaw",
+        }
+        df = df.rename(columns={k: v for k, v in colmap.items() if k in df.columns})
+
+        df["Ativo"] = df["Ativo"].astype(str).str.strip().str.upper()
+
+        d1 = pd.to_datetime(df["DataPag"], dayfirst=True, errors="coerce")
+        d2 = pd.to_datetime(df["DataPag"], dayfirst=False, errors="coerce")
+        df["DataPag"] = d1.fillna(d2)
+
+        df["PrazoDU"] = pd.to_numeric(df["PrazoDU"], errors="coerce")
+        df["DiasEntre"] = pd.to_numeric(df["DiasEntre"], errors="coerce")
+
+        df["ExpJurosPct"] = df["ExpJurosPct"].apply(ptbr_to_float)
+
+        for c in ["JurosProj", "Amort", "FluxoDesc", "VNE", "VNA_ref", "TaxaEmissao"]:
+            if c in df.columns:
+                df[c] = df[c].apply(ptbr_to_float)
+
+        df["TaxaIndicativa"] = [
+            parse_taxa_indicativa(t, x) for t, x in zip(df.get("Tipo", ""), df.get("TaxaRaw", ""))
+        ]
+        return df
+
+
+    # =========================================================
+    # LOOKUP: prêmio/método por data
+    # =========================================================
+    def premio_lookup_full(df_base_id: pd.DataFrame, dates: pd.Series) -> pd.DataFrame:
+        """
+        Para cada data, encontra a linha aplicável por intervalo:
+          Data_Inicio <= d <= Data_Fim (ou Data_Fim NaT).
+        Se houver mais de um match, pega Data_Inicio mais recente.
+        """
+        dfb = df_base_id.sort_values("Data_Inicio").reset_index(drop=True)
+
+        premio, metodo, base, formula = [], [], [], []
+        for d in dates:
+            if pd.isna(d):
+                premio.append(np.nan); metodo.append(np.nan); base.append(np.nan); formula.append(np.nan)
+                continue
+
+            mask = (dfb["Data_Inicio"] <= d) & (dfb["Data_Fim"].isna() | (dfb["Data_Fim"] >= d))
+            if not mask.any():
+                premio.append(np.nan); metodo.append(np.nan); base.append(np.nan); formula.append(np.nan)
+                continue
+
+            row = dfb.loc[mask].sort_values("Data_Inicio").iloc[-1]
+            premio.append(float(row["Premio_aa"]) if pd.notna(row["Premio_aa"]) else np.nan)
+            metodo.append(row.get("MetodoPremio", np.nan))
+            base.append(row.get("BasePremio", np.nan))
+            formula.append(row.get("Formula", np.nan))
+
+        return pd.DataFrame(
+            {"Premio_aa": premio, "MetodoPremio": metodo, "BasePremio": base, "FormulaPremio": formula},
+            index=dates.index,
+        )
+
+
+    # =========================================================
+    # CORE (IGUAL AO SEU CÓDIGO REFERÊNCIA)
+    # =========================================================
+    def process_ativo(
+        ativo: str,
+        df_base: pd.DataFrame,
+        df_flux: pd.DataFrame,
+        modo_metodo: str = "AUTO (Base)",  # "AUTO (Base)" | "FORÇAR PU" | "FORÇAR PI" | "FORÇAR PE" | "FORÇAR VRA"
+        premio_ja_e_efetivo: bool = False,  # <<< alinhado ao que você disse: prêmio no arquivo é a.a. pro-rata base 252
+    ) -> pd.DataFrame:
+        """
+        Alinhado à sua tabela de fórmulas (com P como prêmio a.a., pro rata base 252 quando premio_ja_e_efetivo=False):
+
+        VRA = (VNA + J) · (1+P)^(Pr/252)
+        PU  = VNA + [ P*(Pr/252) ] * VNA
+        PE  = VNA + [ (1+P)^(Pr/252) - 1 ] * VNA
+        PI  = (1+P) * VNA   (se premio_ja_e_efetivo=True)
+            (1+P*(Pr/252))*VNA (se premio_ja_e_efetivo=False)  <-- coerente com "P não é efetivo"
+        """
+
+        a = str(ativo).strip().upper()
+        df_a = df_flux[df_flux["Ativo"] == a].copy().sort_values("DataPag").reset_index(drop=True)
+        if df_a.empty:
+            return df_a
+
+        # =========================
+        # (1) Taxa de desconto e VPPos
+        # =========================
+        df_a["CF"] = df_a["Amort"].fillna(0.0) + df_a["JurosProj"].fillna(0.0)
+        df_a["TaxaDesconto"] = np.where(df_a["FluxoDesc"] != 0, df_a["CF"] / df_a["FluxoDesc"], np.nan)
+        df_a["VPPos"] = df_a["FluxoDesc"][::-1].cumsum()[::-1]
+
+        # =========================
+        # (2) VNA antes/depois amort
+        # =========================
+        vna0 = float(df_a["VNA_ref"].iloc[0]) if pd.notna(df_a["VNA_ref"].iloc[0]) else 0.0
+        df_a["Amort_cum"] = df_a["Amort"].fillna(0.0).cumsum()
+        df_a["VNA_antes"] = vna0 - df_a["Amort_cum"].shift(1, fill_value=0.0)
+        df_a["VNA"] = df_a["VNA_antes"] - df_a["Amort"].fillna(0.0)  # VNA do evento (após amort)
+
+        # =========================
+        # (3) Prazo restante
+        # =========================
+        prazo_max = float(df_a["PrazoDU"].max()) if pd.notna(df_a["PrazoDU"].max()) else np.nan
+        df_a["PrazoRestante"] = (prazo_max - df_a["PrazoDU"]).clip(lower=0)
+
+        # expoente/linear pro-rata base 252 (Pr/252)
+        t = (df_a["PrazoRestante"].fillna(0.0) / DIAS_UTEIS_ANO).astype(float)
+
+        # =========================
+        # (4) Lookup prêmio/método por data
+        # =========================
+        dfb_id = df_base[df_base["ID"] == a]
+        lk = premio_lookup_full(dfb_id, df_a["DataPag"])
+        df_a["Premio_aa"]     = lk["Premio_aa"]         # P (a.a.) em decimal
+        df_a["MetodoPremio"]  = lk["MetodoPremio"]
+        df_a["BasePremio"]    = lk["BasePremio"]
+        df_a["FormulaPremio"] = lk["FormulaPremio"]
+
+        # =========================
+        # (5) Método efetivo
+        # =========================
+        metodo_eff = df_a["MetodoPremio"].fillna("").astype(str).str.upper()
+        if modo_metodo == "FORÇAR PU":
+            metodo_eff = pd.Series(["PU"] * len(df_a), index=df_a.index)
+        elif modo_metodo == "FORÇAR PI":
+            metodo_eff = pd.Series(["PI"] * len(df_a), index=df_a.index)
+        elif modo_metodo == "FORÇAR PE":
+            metodo_eff = pd.Series(["PE"] * len(df_a), index=df_a.index)
+        elif modo_metodo == "FORÇAR VRA":
+            metodo_eff = pd.Series(["VRA"] * len(df_a), index=df_a.index)
+
+        # =========================
+        # Componentes
+        # =========================
+        P = df_a["Premio_aa"].fillna(0.0).astype(float)     # prêmio a.a. (decimal)
+        VNA = df_a["VNA"].fillna(0.0).astype(float)
+        J = df_a["JurosProj"].fillna(0.0).astype(float)
+        A = df_a["Amort"].fillna(0.0).astype(float)
+
+        # condições mínimas
+        ok = (VNA > 0) & (df_a["TaxaDesconto"].notna()) & (df_a["TaxaDesconto"] != 0)
+
+        # =========================
+        # Prêmios efetivos do evento (quando P não é efetivo)
+        # =========================
+        # Linear pro-rata (PU / PI coerente com "não é efetivo")
+        P_lin = np.where(ok, P * t, 0.0)
+
+        # Exponencial pro-rata (PE / VRA coerente com "não é efetivo")
+        P_exp_factor = np.where(ok, np.power(1.0 + P, t), 1.0)          # (1+P)^(Pr/252)
+        P_exp_eff    = np.where(ok, P_exp_factor - 1.0, 0.0)            # [(1+P)^(Pr/252) - 1]
+
+        # Se o usuário marcar que P já é efetivo do evento, ajusta:
+        if premio_ja_e_efetivo:
+            # "efetivo" aqui significa: já está no nível do evento (não anual/pro-rata)
+            # -> linear vira P, expo vira (1+P), efetivo expo vira P
+            P_lin = np.where(ok, P, 0.0)
+            P_exp_factor = np.where(ok, 1.0 + P, 1.0)
+            P_exp_eff = np.where(ok, P, 0.0)
+
+        # =========================
+        # Saídas
+        # =========================
+        df_a["PU_Recompra_calc"] = np.nan
+        df_a["Premio_valor"] = np.nan
+        df_a["Recompra"] = np.nan
+
+        # =========================
+        # Aplicadores (calculam só o necessário)
+        # =========================
+        def _apply_VRA(mask: pd.Series):
+            # VRA = (VNA + J) · (1+P)^(Pr/252)
+            pu_rec = (VNA[mask] + J[mask]) * P_exp_factor[mask]
+            premio_val = pu_rec - (VNA[mask] + J[mask])
+            recompra = pu_rec + A[mask]
+            df_a.loc[mask, "PU_Recompra_calc"] = pu_rec
+            df_a.loc[mask, "Premio_valor"] = premio_val
+            df_a.loc[mask, "Recompra"] = recompra
+
+        def _apply_PU(mask: pd.Series):
+            # PU = VNA + [ P*(Pr/252) ] * VNA
+            pu_rec = VNA[mask] + (P_lin[mask] * VNA[mask])
+            premio_val = pu_rec - VNA[mask]
+            recompra = pu_rec + J[mask] + A[mask]
+            df_a.loc[mask, "PU_Recompra_calc"] = pu_rec
+            df_a.loc[mask, "Premio_valor"] = premio_val
+            df_a.loc[mask, "Recompra"] = recompra
+
+        def _apply_PE(mask: pd.Series):
+            # PE = VNA + [ (1+P)^(Pr/252) - 1 ] * VNA
+            pu_rec = VNA[mask] + (P_exp_eff[mask] * VNA[mask])
+            premio_val = pu_rec - VNA[mask]
+            recompra = pu_rec + J[mask] + A[mask]
+            df_a.loc[mask, "PU_Recompra_calc"] = pu_rec
+            df_a.loc[mask, "Premio_valor"] = premio_val
+            df_a.loc[mask, "Recompra"] = recompra
+
+        def _apply_PI(mask: pd.Series):
+            # PI (na sua tabela): (1+P) * VNA
+            # Mas se P NÃO é efetivo (seu caso), o correto é usar P_lin (P*Pr/252) como "P do evento".
+            p_for_pi = P if premio_ja_e_efetivo else P_lin
+            pu_rec = (1.0 + p_for_pi[mask]) * VNA[mask]
+            premio_val = pu_rec - VNA[mask]
+            recompra = pu_rec + J[mask] + A[mask]
+            df_a.loc[mask, "PU_Recompra_calc"] = pu_rec
+            df_a.loc[mask, "Premio_valor"] = premio_val
+            df_a.loc[mask, "Recompra"] = recompra
+
+        # =========================
+        # Execução (AUTO ou FORÇAR)
+        # =========================
+        if modo_metodo.startswith("FORÇAR "):
+            m = modo_metodo.replace("FORÇAR ", "").strip().upper()
+            mask_all = pd.Series(True, index=df_a.index)
+            if m == "VRA":
+                _apply_VRA(mask_all)
+            elif m == "PU":
+                _apply_PU(mask_all)
+            elif m == "PE":
+                _apply_PE(mask_all)
+            elif m == "PI":
+                _apply_PI(mask_all)
+            else:
+                _apply_PU(mask_all)
+        else:
+            mask_vra = metodo_eff.eq("VRA")
+            mask_pu  = metodo_eff.eq("PU") | metodo_eff.eq("") | metodo_eff.isna()
+            mask_pe  = metodo_eff.eq("PE")
+            mask_pi  = metodo_eff.eq("PI")
+
+            if mask_vra.any(): _apply_VRA(mask_vra)
+            if mask_pu.any():  _apply_PU(mask_pu)
+            if mask_pe.any():  _apply_PE(mask_pe)
+            if mask_pi.any():  _apply_PI(mask_pi)
+
+            # fallback (método desconhecido -> PU)
+            mask_none = df_a["Recompra"].isna()
+            if mask_none.any():
+                _apply_PU(mask_none)
+
+        # =========================
+        # (7) VP / Yield / BE
+        # =========================
+        df_a["VP"] = df_a["Recompra"] / df_a["TaxaDesconto"]
+        df_a["Yield"] = df_a["VP"] / df_a["VPPos"] - 1.0
+
+        taxa_ind = df_a["TaxaIndicativa"].dropna()
+        taxa_ind = float(taxa_ind.iloc[0]) if len(taxa_ind) else np.nan
+        df_a["Taxa_BE"] = taxa_ind if pd.notna(taxa_ind) else df_a["TaxaEmissao"]
+
+        df_a["BE"] = (1.0 - df_a["Yield"]) * (1.0 + df_a["Taxa_BE"]) - 1.0
+
+        return df_a
+
+    # =========================================================
+    # UI — TUDO NA TELA PRINCIPAL / SEM FILTRO POR DATA
+    # =========================================================
+    st.markdown("### Entradas")
+
+    base_path = BASE_XLSX
+    flux_path = FLUX_CSV
+
+    base_ok = Path(base_path).exists()
+    flux_ok = Path(flux_path).exists()
+    if not base_ok or not flux_ok:
+        msgs = []
+        if not base_ok:
+            msgs.append("Base XLSX não encontrada (ajuste o caminho).")
+        if not flux_ok:
+            msgs.append("Fluxo CSV não encontrado (ajuste o caminho).")
+        st.warning(" | ".join(msgs))
+        st.stop()
+
+    df_base = load_base_premios(base_path)
+    df_flux = load_fluxos(flux_path)
+
+    ativos = sorted(list(set(df_base["ID"].unique()).intersection(set(df_flux["Ativo"].unique()))))
+    if not ativos:
+        st.error("Nenhum ativo em comum entre a Base de Prêmios e o flux_deb2.csv.")
+        st.stop()
+
+    c3, c4, c5 = st.columns([1.2, 1.0, 1.0])
+    with c3:
+        ativo_sel = st.selectbox("Ativo", options=ativos, index=0)
+    with c4:
+        modo_metodo = st.selectbox(
+            "Método",
+            options=["AUTO (Base)", "FORÇAR PU", "FORÇAR VRA"],
+            index=0,
+            help="AUTO usa MetodoPremio do XLSX por data. Os demais forçam o método em todas as linhas.",
+        )
+    with c5:
+        ordenar_eventos = st.selectbox(
+            "Ordenação",
+            options=["DataPag", "BE (menor→maior)", "BE (maior→menor)", "PrazoDU", "PrazoRestante"],
+            index=0,
+        )
+
+    ev_sel = st.multiselect(
+        "Eventos",
+        options=["Juros", "Juros|Amortização", "Amortização"],
+        default=[],
+        help="Deixe vazio para mostrar todos.",
+    )
+
+    st.caption("BE = (1 − Yield) * (1 + TaxaIndicativa) − 1")
+
+    calcular = st.button("Calcular", type="primary", use_container_width=True)
+    if not calcular:
+        st.info("Preencha as entradas e clique em **Calcular**.")
+        st.stop()
+
+    df_a = process_ativo(ativo_sel, df_base, df_flux, modo_metodo=modo_metodo)
+    if df_a.empty:
+        st.warning("Sem linhas para este ativo.")
+        st.stop()
+
+    if ev_sel:
+        df_a = df_a[df_a["Evento"].isin(ev_sel)].copy()
+        if df_a.empty:
+            st.warning("Sem dados após aplicar filtro de eventos.")
+            st.stop()
+
+    # ordenação
+    if ordenar_eventos == "BE (menor→maior)":
+        df_a = df_a.sort_values(["BE", "DataPag"], ascending=[True, True])
+    elif ordenar_eventos == "BE (maior→menor)":
+        df_a = df_a.sort_values(["BE", "DataPag"], ascending=[False, True])
+    elif ordenar_eventos == "PrazoDU":
+        df_a = df_a.sort_values(["PrazoDU", "DataPag"], ascending=[True, True])
+    elif ordenar_eventos == "PrazoRestante":
+        df_a = df_a.sort_values(["PrazoRestante", "DataPag"], ascending=[True, True])
+    else:
+        df_a = df_a.sort_values(["DataPag"], ascending=True)
+
+    # =========================================================
+    # OUTPUT
+    # =========================================================
+    taxa_be = float(df_a["Taxa_BE"].dropna().iloc[0]) if df_a["Taxa_BE"].dropna().shape[0] else np.nan
+    be_min = float(df_a["BE"].min())
+    be_last = float(df_a.sort_values("DataPag")["BE"].iloc[-1])
+
+    idx_min = df_a["BE"].idxmin()
+    row_min = df_a.loc[idx_min]
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Ativo", ativo_sel)
+    k2.metric("Taxa indicativa", fmt_pct(taxa_be, 4))
+    k3.metric("BE (pior / mínimo)", fmt_pct(be_min, 4))
+    k4.metric("BE (último evento)", fmt_pct(be_last, 4))
+    k5.metric("Eventos", f"{len(df_a):,}".replace(",", "."))
+
+    st.caption(
+        f"**Pior BE** em **{row_min['DataPag'].strftime('%d/%m/%Y')}** "
+        f"({row_min['Evento']}) — BE={fmt_pct(row_min['BE'], 4)} | Yield={fmt_pct(row_min['Yield'], 7)} | "
+        f"PrRest={fmt_num(row_min['PrazoRestante'],0)} DU | Prêmio(R$)={fmt_num(row_min['Premio_valor'],6)}"
+    )
+
+    st.divider()
+
+    # gráfico
+    df_plot = df_a.copy().sort_values("DataPag")
+    fig = px.line(
+        df_plot,
+        x="DataPag",
+        y="BE",
+        markers=True,
+        title=f"{ativo_sel} — BE por data de pagamento | Método: {modo_metodo}",
+        hover_data=[
+            "Evento", "PrazoDU", "PrazoRestante",
+            "Yield", "Taxa_BE",
+            "Premio_aa", "Premio_valor",
+            "VNA_antes", "VNA", "JurosProj", "Amort", "Recompra",
+            "MetodoPremio",
+        ],
+    )
+    fig.update_layout(yaxis_tickformat=".2%")
+    fig.add_scatter(
+        x=[row_min["DataPag"]],
+        y=[row_min["BE"]],
+        mode="markers",
+        name="Pior BE",
+        marker=dict(size=12, symbol="x"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # tabela no padrão “como deveria estar”
+    st.markdown("### Fluxo (eventos) — tabela final")
+
+    df_show = df_plot.copy()
+    df_show["DataPag"] = df_show["DataPag"].dt.strftime("%d/%m/%Y")
+    df_show["Premio_pct"] = df_show["Premio_aa"].apply(lambda x: fmt_pct(x, 2) if pd.notna(x) else "")
+
+    # formata numéricos (mantém precisão útil)
+    for c in ["JurosProj", "Amort", "FluxoDesc", "TaxaDesconto", "VPPos", "VNA", "Premio_valor", "Recompra", "VP"]:
+        if c in df_show.columns:
+            nd = 9 if c in ["TaxaDesconto"] else 6
+            df_show[c] = df_show[c].apply(lambda x: fmt_num(x, nd))
+
+    df_show["Yield"] = df_plot["Yield"].apply(lambda x: fmt_pct(x, 7))
+    df_show["BE"]    = df_plot["BE"].apply(lambda x: fmt_pct(x, 4))
+    df_show["ExpJurosPct"] = df_plot["ExpJurosPct"].apply(lambda x: fmt_pct(x, 2) if pd.notna(x) else "")
+
+    cols_table = [
+        "Evento", "DataPag", "PrazoDU", "DiasEntre", "PrazoRestante",
+        "ExpJurosPct", "JurosProj", "Amort", "FluxoDesc",
+        "TaxaDesconto", "VPPos",
+        "Premio_pct", "VNA", "Premio_valor",
+        "Recompra", "VP", "Yield", "BE",
+    ]
+    cols_table = [c for c in cols_table if c in df_show.columns]
+
+    st.dataframe(df_show[cols_table], use_container_width=True)
+
+    st.download_button(
+        "Baixar eventos (CSV)",
+        data=df_a.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"be_eventos_{ativo_sel}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+    
