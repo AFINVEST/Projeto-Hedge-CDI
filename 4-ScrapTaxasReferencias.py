@@ -28,7 +28,7 @@ DATA_DIR = Path("Dados")
 DATA_DIR.mkdir(exist_ok=True)
 
 USE_SPECIFIC_DATE = True
-SPECIFIC_DATE = pd.Timestamp("2026-01-30")  # <- ajuste aqui
+SPECIFIC_DATE = pd.Timestamp("2026-02-02")  # <- ajuste aqui
 
 # fallback local (se quiser rodar sem baixar)
 INPUT_CSV = Path(r"Dados\TaxaReferencia_PRE_20251215.csv")
