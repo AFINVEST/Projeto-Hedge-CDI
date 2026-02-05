@@ -781,7 +781,7 @@ def _bday_count(d0: pd.Timestamp, d1: pd.Timestamp) -> int:
 
 # --------------------------- Leitura bases ---------------------------
 def find_relatorio_path() -> Optional[Path]:
-    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-01-30.xlsx"))
+    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-02-02.xlsx"))
     return files[0] if files else None
 
 @st.cache_data
