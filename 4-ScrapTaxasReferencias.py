@@ -539,12 +539,21 @@ def run_from_csv_and_interpolate(csv_path: Path):
     add = add[["ref_date", "DU", "dias_corridos", "di_aa_252", "pre_aa_360", "source"]]
 
     if PARQUET_RAW.exists():
-        base = pd.read_parquet(PARQUET_RAW)
-        base = base[base["ref_date"] != ref_dt]
+        try:
+            base = pd.read_parquet(PARQUET_RAW)
+        except OSError as exc:
+            backup = PARQUET_RAW.with_suffix(
+                PARQUET_RAW.suffix + f".corrupt.{pd.Timestamp.now():%Y%m%d_%H%M%S}"
+            )
+            PARQUET_RAW.rename(backup)
+            print(f"[warn] parquet corrompido, movido para: {backup} | erro: {exc}")
+            base = add
+        else:
+            base = base[base["ref_date"] != ref_dt]
 
-        # evita warning de concat com vazio
-        if not add.empty:
-            base = pd.concat([base, add], ignore_index=True)
+            # evita warning de concat com vazio
+            if not add.empty:
+                base = pd.concat([base, add], ignore_index=True)
     else:
         base = add
 
