@@ -39,6 +39,12 @@ MOTOR_YTC_CHAMADAS = "YTC_CHAMADAS"   # fluxo até próxima CALL (YTC), com % do
 # ========= Exceções (planilha manual) =========
 EXC_XLSX = "Dados/Tratamento Exceções.xlsx"
 
+# --------------------------- Leitura bases ---------------------------
+def find_relatorio_path() -> Optional[Path]:
+    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-02-04.xlsx"))
+    return files[0] if files else None
+
+
 def add_custom_css():
     st.markdown(
         """
@@ -779,10 +785,7 @@ def _bday_count(d0: pd.Timestamp, d1: pd.Timestamp) -> int:
     if pd.isna(d0) or pd.isna(d1) or d1 <= d0: return 0
     return len(pd.bdate_range(d0, d1, inclusive="right"))
 
-# --------------------------- Leitura bases ---------------------------
-def find_relatorio_path() -> Optional[Path]:
-    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-02-02.xlsx"))
-    return files[0] if files else None
+
 
 @st.cache_data
 def read_any(path: Path) -> pd.DataFrame:
