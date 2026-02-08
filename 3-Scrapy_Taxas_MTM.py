@@ -35,7 +35,7 @@ OUT_SEM_TAXA_XLSX = Path("Dados/ativos_sem_taxa.xlsx")
 
 # Diretório da árvore de carteiras diárias (BTG)
 BASE_DIR = Path(r"Z:\Asset Management")  # ajuste se necessário
-SPECIFIC_DATE = pd.Timestamp("2026-02-04")            # <- Data que será inserida no campo #Data quando o toggle estiver ligado
+SPECIFIC_DATE = pd.Timestamp("2026-02-05")            # <- Data que será inserida no campo #Data quando o toggle estiver ligado
 
 # DEBUG
 DEBUG = True
