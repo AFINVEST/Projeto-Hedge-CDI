@@ -29,13 +29,13 @@ from openpyxl import load_workbook
 
 # ========================= Paths / Config =========================
 CONTROLE_XLSX = Path("Dados/ativos_mapeados_para_controle.xlsx")   # entrada
-MATRIZ_ORIG_XLSX = Path("Dados/Matriz de Curvas 30012026.xlsx")
+MATRIZ_ORIG_XLSX = Path("Dados/Matriz de Curvas 06022026.xlsx")
 OUT_FINAL_XLSX = Path("Dados/ativos_mapeados_com_taxa_efetiva.xlsx")
 OUT_SEM_TAXA_XLSX = Path("Dados/ativos_sem_taxa.xlsx")
 
 # Diretório da árvore de carteiras diárias (BTG)
 BASE_DIR = Path(r"Z:\Asset Management")  # ajuste se necessário
-SPECIFIC_DATE = pd.Timestamp("2026-02-04")            # <- Data que será inserida no campo #Data quando o toggle estiver ligado
+SPECIFIC_DATE = pd.Timestamp("2026-02-11")            # <- Data que será inserida no campo #Data quando o toggle estiver ligado
 
 # DEBUG
 DEBUG = True
