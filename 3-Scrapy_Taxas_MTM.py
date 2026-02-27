@@ -158,6 +158,7 @@ FUND_NAME_MAP_RAW = {
     "FIRF GERAES 30":      "GERAES 30",
     "HORIZONTE FIM":           "AF HORIZONTE",
     "JERA2026":            "JERA2026",
+    "CARMEL INFRA":   "CARMEL INFRA",
     "MANACA INFRA":   "MANACA INFRA",
     "REAL FIM":            "REAL FIM",
     "TOPAZIO INFRA":       "TOPAZIO INFRA",
