@@ -1,4 +1,4 @@
-﻿cod_Ativo,FormaCDI,pct_flutuante,CicloJuros,Data Proximo Juros,Data Emissão,vencimento,Data Call Inicial,PU Emissão,cod_Ativo_norm
+﻿cod_Ativo,FormaCDI,pct_flutuante,CicloJuros,Data Proximo Juros,Data Emissão,vencimento,Data Call Inicial,PU_Emissão,cod_Ativo_norm
 LFSN1800DIG,%CDI,109.1,BULLET,,2018-08-03,2026-08-03,,300000,LFSN1800DIG
 LFSN1800D4W,PREFIXADA,13.05,-,,,,,-,LFSN1800D4W
 LFSN210099R,IPCA,,-,,,,,-,LFSN210099R
