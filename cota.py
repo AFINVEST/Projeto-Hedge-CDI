@@ -319,9 +319,41 @@ def apply_exceptions_to_pdf_idx(pdf_idx: pd.DataFrame, exc: pd.DataFrame) -> pd.
 
         # overwrite forte: só valores não-nulos de e2 substituem m
         before_all = m.loc[in_both, e2.columns].copy()
-        
-        # Substitui m.update() por m.loc[] para forçar a escrita de NaNs
-        m.loc[in_both, e2.columns] = e2[e2.columns] 
+
+        # Corrige tipos antes de sobrescrever
+        date_cols = {
+            "Data_Prox_Juros_final",
+            "Data_Emissao_final",
+            "Vencimento_final",
+            "Data_Call_Inicial_final",
+        }
+
+        num_cols = {
+            "pct_flutuante_final",
+            "alpha_norm",
+            "PU_emissao_final",
+        }
+
+        for c in e2.columns:
+            if c not in m.columns:
+                continue
+
+            if c in date_cols:
+                m[c] = pd.to_datetime(m[c], errors="coerce", dayfirst=True)
+                e2[c] = pd.to_datetime(e2[c], errors="coerce", dayfirst=True)
+
+            elif c in num_cols:
+                m[c] = pd.to_numeric(m[c], errors="coerce")
+                e2[c] = pd.to_numeric(e2[c], errors="coerce")
+
+            else:
+                m[c] = m[c].astype("object")
+                e2[c] = e2[c].astype("object")
+
+        # Atualiza coluna por coluna, evitando erro de tipo no pandas
+        for c in e2.columns:
+            m.loc[e2.index, c] = e2[c]
+
         after_all = m.loc[in_both, e2.columns].copy()
 
         # estatísticas por coluna (agora compara o B/A total)
