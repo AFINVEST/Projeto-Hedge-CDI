@@ -10,7 +10,7 @@ import pandas as pd
 import time
 import re
 
-ativos = ["HAPV21", "KLBNA2"]
+ativos = ["KLBNA2"]
 
 service = Service()
 driver = webdriver.Chrome(service=service)

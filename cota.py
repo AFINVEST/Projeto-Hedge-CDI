@@ -41,7 +41,7 @@ EXC_XLSX = "Dados/Tratamento Exceções.xlsx"
 
 # --------------------------- Leitura bases ---------------------------
 def find_relatorio_path() -> Optional[Path]:
-    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-07-09.xlsx"))
+    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-07-10.xlsx"))
     return files[0] if files else None
 
 
