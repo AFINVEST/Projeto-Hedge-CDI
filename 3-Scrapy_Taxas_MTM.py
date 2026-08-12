@@ -29,7 +29,7 @@ from openpyxl import load_workbook
 
 # ========================= Paths / Config =========================
 CONTROLE_XLSX = Path("Dados/ativos_mapeados_para_controle.xlsx")   # entrada
-MATRIZ_ORIG_XLSX = Path("Dados/Matriz de Curvas 10072026.xlsx")
+MATRIZ_ORIG_XLSX = Path("Dados/Matriz de Curvas 10082026.xlsx")
 OUT_FINAL_XLSX = Path("Dados/ativos_mapeados_com_taxa_efetiva.xlsx")
 OUT_SEM_TAXA_XLSX = Path("Dados/ativos_sem_taxa.xlsx")
 
