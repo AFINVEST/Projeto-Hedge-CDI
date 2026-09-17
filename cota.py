@@ -41,7 +41,7 @@ EXC_XLSX = "Dados/Tratamento Exceções.xlsx"
 
 # --------------------------- Leitura bases ---------------------------
 def find_relatorio_path() -> Optional[Path]:
-    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-08-31.xlsx"))
+    files = sorted(Path(".").glob("Dados/Relatório de Posição 2026-09-15.xlsx"))
     return files[0] if files else None
 
 
@@ -4523,10 +4523,15 @@ if visao == "Calculadora de Fundos":
         return s
 
     # ---------- Seleção do fundo ----------
-    if ("Fundo" not in out.columns) or out.empty:
-        st.info("Nenhum fundo disponível na tabela filtrada atual.")
-        st.stop()
-    fundos = sorted(out["Fundo"].dropna().astype(str).unique().tolist())
+    fundos = sorted(
+        merged["Fundo"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
+        .tolist()
+    )
+
     sel_fundo = st.selectbox("Fundo", fundos, key="fundo_calc_sel")
 
     out_fundo = out[out["Fundo"].astype(str) == sel_fundo].copy()
